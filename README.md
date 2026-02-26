@@ -1,34 +1,53 @@
 # Pomodoro Timer (Chrome Extension)
 
-A lightweight and reliable Pomodoro timer extension for Chrome.
+A fast, reliable Pomodoro timer for Chrome that helps you ship work in focused sprints.
 
-## Features
+Think less timer admin, more deep work.
 
-- Start, pause, and reset timer
-- Focus mode and break mode
-- Custom focus duration (1 to 120 minutes)
-- Badge countdown on extension icon
-- Notification on timer completion
-- State persistence across popup close/reopen
+## Install
 
-## Reliability model (MV3 safe)
+### Option 1: Chrome Web Store
 
-This extension uses timestamp-based state in the service worker instead of trusting long-lived JavaScript intervals.
+Install directly from:
+https://chromewebstore.google.com/detail/pomodoro-timer/geibgkighpdnoioegfhmkffoohkdnmdd
 
-- Running timer stores an `endTs` timestamp
-- Remaining time is computed from `Date.now()`
-- `chrome.alarms` is used for periodic wake-ups and completion checks
-
-This approach is resilient to MV3 service worker suspension.
-
-## Install (load unpacked)
+### Option 2: Load unpacked (developer)
 
 1. Open `chrome://extensions/`
 2. Enable **Developer mode**
 3. Click **Load unpacked**
 4. Select this repository folder
 
-## Files
+## Features
+
+- Start, pause, and reset controls
+- Focus mode and break mode
+- Custom focus length (1 to 120 minutes)
+- Live badge countdown on extension icon
+- Completion notification when time is up
+- State persistence when popup is closed and reopened
+
+## Why this implementation is reliable (MV3-safe)
+
+Manifest V3 service workers can suspend, so naïve `setInterval` timers drift or stop.
+
+This extension uses a resilient model:
+
+- Running sessions store an absolute `endTs` timestamp
+- Remaining time is recomputed from `Date.now()`
+- `chrome.alarms` drives wake-ups and completion checks
+
+Result: stable countdown behaviour even with service worker lifecycle events.
+
+## Usage flow
+
+1. Pick mode (`Focus` or `Break`)
+2. Optionally set custom focus minutes
+3. Press `Start`
+4. Keep working while the badge tracks remaining time
+5. Get a completion notification
+
+## Project files
 
 - `manifest.json`
 - `background.js`
@@ -38,14 +57,15 @@ This approach is resilient to MV3 service worker suspension.
 
 ## Permissions
 
-- `storage` for saving timer state
-- `alarms` for periodic wake-ups
+- `storage` for persisted timer state
+- `alarms` for timer wake-ups in MV3
 - `notifications` for completion alerts
 
 ## Notes
 
-- Keep one running timer per extension instance
-- Badge updates are local and do not use network resources
+- One active timer state per extension instance
+- No network calls required for core timer behaviour
+- Badge updates and state handling are local
 
 ## Licence
 
