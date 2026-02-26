@@ -1,51 +1,87 @@
 const timeDisplay = document.getElementById('time');
+const statusDisplay = document.getElementById('status');
 const startButton = document.getElementById('start');
 const pauseButton = document.getElementById('pause');
 const resetButton = document.getElementById('reset');
+const focusModeButton = document.getElementById('focusMode');
+const breakModeButton = document.getElementById('breakMode');
+const applyFocusButton = document.getElementById('applyFocus');
+const focusInput = document.getElementById('focusMinutes');
 
-let isRunning = false;
+let pollHandle = null;
 
-// Update the time display in the popup
-function updateDisplay(timeLeft) {
-    const minutes = Math.floor(timeLeft / 60);
-    const seconds = timeLeft % 60;
-    timeDisplay.textContent = `${minutes < 10 ? '0' : ''}${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+function formatTime(sec) {
+  const minutes = Math.floor(sec / 60);
+  const seconds = sec % 60;
+  return `${minutes < 10 ? '0' : ''}${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
-// Request the current state from the background script
+function updateDisplay(state) {
+  const timeLeft = Number(state.timeLeft || 0);
+  timeDisplay.textContent = formatTime(timeLeft);
+
+  const isRunning = Boolean(state.isRunning);
+  const mode = state.mode || 'focus';
+
+  startButton.disabled = isRunning;
+  pauseButton.disabled = !isRunning;
+
+  statusDisplay.textContent = `Mode: ${mode} | ${isRunning ? 'Running' : 'Paused'}`;
+}
+
+function safeSend(message, callback) {
+  chrome.runtime.sendMessage(message, (response) => {
+    if (chrome.runtime.lastError) {
+      statusDisplay.textContent = `Error: ${chrome.runtime.lastError.message}`;
+      return;
+    }
+    if (typeof callback === 'function') callback(response);
+  });
+}
+
 function getState() {
-    chrome.runtime.sendMessage({ action: "getStatus" }, (response) => {
-        updateDisplay(response.timeLeft);
-        isRunning = response.isRunning;
-        startButton.disabled = isRunning;
-        pauseButton.disabled = !isRunning;
-    });
+  safeSend({ action: 'getStatus' }, (response) => {
+    if (!response) {
+      statusDisplay.textContent = 'No response from timer service';
+      return;
+    }
+    updateDisplay(response);
+  });
 }
 
-// Handle Start button click
 startButton.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: "start" });
-    startButton.disabled = true;
-    pauseButton.disabled = false;
+  safeSend({ action: 'start' }, getState);
 });
 
-// Handle Pause button click
 pauseButton.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: "pause" });
-    startButton.disabled = false;
-    pauseButton.disabled = true;
+  safeSend({ action: 'pause' }, getState);
 });
 
-// Handle Reset button click
 resetButton.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: "reset" });
-    startButton.disabled = false;
-    pauseButton.disabled = true;
-    getState();
+  safeSend({ action: 'reset' }, getState);
 });
 
-// Periodically update the display while the popup is open
-setInterval(getState, 1000);
+focusModeButton.addEventListener('click', () => {
+  safeSend({ action: 'setMode', mode: 'focus' }, getState);
+});
 
-// Load the initial state when the popup is opened
-getState();
+breakModeButton.addEventListener('click', () => {
+  safeSend({ action: 'setMode', mode: 'break' }, getState);
+});
+
+applyFocusButton.addEventListener('click', () => {
+  const minutes = Number(focusInput.value || 20);
+  safeSend({ action: 'setFocusMinutes', minutes }, getState);
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  getState();
+  pollHandle = setInterval(getState, 1000);
+});
+
+window.addEventListener('unload', () => {
+  if (pollHandle) {
+    clearInterval(pollHandle);
+    pollHandle = null;
+  }
+});

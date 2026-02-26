@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Pomodoro Timer",
-  "version": "1.0.1",
-  "description": "A 20-minute Pomodoro timer with start, pause, and reset features.",
+  "version": "1.1.0",
+  "description": "A reliable Pomodoro timer with start, pause, reset, custom focus duration, and break mode.",
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
@@ -11,7 +11,7 @@
       "128": "icon.png"
     }
   },
-  "permissions": ["storage", "alarms", "background"],
+  "permissions": ["storage", "alarms", "notifications"] ,
   "background": {
     "service_worker": "background.js"
   }
