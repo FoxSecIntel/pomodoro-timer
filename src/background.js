@@ -45,15 +45,17 @@ async function saveState(state) {
   await chrome.storage.local.set({ [STATE_KEY]: state });
 }
 
+function isTimerExpired(state, now = Date.now()) {
+  return Number.isFinite(Number(state?.endTs)) && Number(state.endTs) > 0 && now >= Number(state.endTs);
+}
+
 function materialiseState(state, now = Date.now()) {
   const next = { ...state };
 
   if (next.isRunning && next.endTs) {
+    // Derive remaining time from wall-clock to avoid drift.
+    // Do not flip isRunning here. Completion handling belongs in tick().
     next.timeLeftMs = Math.max(0, next.endTs - now);
-    if (next.timeLeftMs <= 0) {
-      next.isRunning = false;
-      next.timeLeftMs = 0;
-    }
   }
 
   return next;
@@ -103,7 +105,16 @@ function computeNextMode(state) {
 }
 
 async function ensureAlarmForRunningTimer() {
-  const state = materialiseState(await loadState());
+  let state = await loadState();
+  const now = Date.now();
+
+  // Prevent stale running state from surviving restart without completion handling.
+  if (state.isRunning && isTimerExpired(state, now)) {
+    state = await completeAndAdvance(state, now);
+  } else {
+    state = materialiseState(state, now);
+  }
+
   const alarm = await chrome.alarms.get(ALARM_NAME);
 
   if (state.isRunning) {
@@ -157,16 +168,18 @@ async function completeAndAdvance(state, now = Date.now()) {
 }
 
 async function tick() {
-  let state = materialiseState(await loadState());
+  const rawState = await loadState();
   const now = Date.now();
+  const expired = isTimerExpired(rawState, now);
 
-  if (state.isRunning && state.timeLeftMs <= 0) {
-    state = await completeAndAdvance(state, now);
-  } else {
-    await saveState(state);
-    await setBadge(state);
+  if (expired) {
+    // Completion is handled exactly once because completeAndAdvance clears endTs and isRunning.
+    return await completeAndAdvance(rawState, now);
   }
 
+  const state = materialiseState(rawState, now);
+  await saveState(state);
+  await setBadge(state);
   return state;
 }
 
