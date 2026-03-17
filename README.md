@@ -25,6 +25,20 @@ If you want a no-fuss timer that survives popup closes and still completes relia
 
 ![Pomodoro Timer popup UI](docs/media/pomodoro-ui.jpg)
 
+## Project structure
+
+```text
+README.md
+src/
+  manifest.json
+  background.js
+  popup.html
+  popup.js
+  icon.png
+docs/media/
+  pomodoro-ui.jpg
+```
+
 ## Architecture
 
 ```mermaid
@@ -54,7 +68,7 @@ https://chromewebstore.google.com/detail/pomodoro-timer/geibgkighpdnoioegfhmkffo
 2. Open Chrome and go to `chrome://extensions/`
 3. Enable **Developer mode**
 4. Click **Load unpacked**
-5. Select the repository folder (where `manifest.json` is located)
+5. Select the `src` folder (where `manifest.json` is located)
 
 ## How to use
 
