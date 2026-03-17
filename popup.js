@@ -23,6 +23,9 @@ function updateDisplay(state) {
   const isRunning = Boolean(state.isRunning);
   const mode = state.mode || 'focus';
 
+  // Visual feedback by mode: deep grey for focus, forest green for break.
+  timeDisplay.style.color = mode === 'break' ? '#2E8B57' : '#343a40';
+
   startButton.disabled = isRunning;
   pauseButton.disabled = !isRunning;
 

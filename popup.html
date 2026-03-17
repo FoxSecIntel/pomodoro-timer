@@ -9,19 +9,30 @@
       width: 260px;
       text-align: center;
       margin: 0;
-      padding: 12px;
+      padding: 10px;
+      box-sizing: border-box;
     }
-    .timer { margin-top: 6px; }
+    .timer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 2px;
+    }
     #time {
       font-size: 44px;
-      margin: 8px 0 10px;
+      margin: 6px 0 8px;
+      color: #343a40; /* Focus default: deep grey */
+      font-weight: 700;
     }
     .controls, .modes {
       display: flex;
       justify-content: center;
-      gap: 8px;
-      flex-wrap: wrap;
+      gap: 10px;
+      flex-wrap: nowrap;
       margin-bottom: 8px;
+      width: 100%;
     }
     button {
       padding: 8px 10px;
@@ -31,6 +42,7 @@
       border-radius: 6px;
       background: #007bff;
       color: #fff;
+      white-space: nowrap;
     }
     button.secondary { background: #555; }
     button.success { background: #2E8B57; }
@@ -40,9 +52,16 @@
       justify-content: center;
       gap: 8px;
       margin-top: 6px;
+      width: 100%;
+    }
+    .row label {
+      font-size: 13px;
+      color: #444;
+      min-width: 58px;
+      text-align: right;
     }
     input[type='number'] {
-      width: 70px;
+      width: 64px;
       padding: 6px;
       font-size: 14px;
     }
