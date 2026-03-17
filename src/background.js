@@ -1,180 +1,292 @@
 const STATE_KEY = 'pomodoroState';
-const ALARM_TICK = 'pomodoro_tick';
+const ALARM_NAME = 'pomodoro_tick';
 
-const DEFAULT_STATE = {
-  mode: 'focus',
+const DEFAULTS = {
+  mode: 'focus', // focus | shortBreak | longBreak
   isRunning: false,
-  focusMinutes: 20,
-  breakMinutes: 5,
-  timeLeft: 20 * 60,
-  endTs: null
+  startedAt: null,
+  endTs: null,
+  timeLeftMs: 25 * 60 * 1000,
+  focusMinutes: 25,
+  shortBreakMinutes: 5,
+  longBreakMinutes: 15,
+  completedFocusCount: 0,
+  lastCompletedMode: null,
+  completionEventId: 0,
+  showDoneUntil: 0
 };
 
-function modeSeconds(state) {
-  return (state.mode === 'break' ? state.breakMinutes : state.focusMinutes) * 60;
+function clamp(v, min, max, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
 }
 
-function formatBadge(seconds) {
-  const s = Math.max(0, Number(seconds || 0));
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return `${m}:${String(rem).padStart(2, '0')}`;
+function durationMsForMode(state, mode = state.mode) {
+  if (mode === 'focus') return state.focusMinutes * 60 * 1000;
+  if (mode === 'shortBreak') return state.shortBreakMinutes * 60 * 1000;
+  return state.longBreakMinutes * 60 * 1000;
 }
 
-async function getState() {
-  const saved = await chrome.storage.local.get(STATE_KEY);
-  return { ...DEFAULT_STATE, ...(saved[STATE_KEY] || {}) };
+async function loadState() {
+  const data = await chrome.storage.local.get(STATE_KEY);
+  const merged = { ...DEFAULTS, ...(data[STATE_KEY] || {}) };
+
+  merged.focusMinutes = clamp(merged.focusMinutes, 1, 120, DEFAULTS.focusMinutes);
+  merged.shortBreakMinutes = clamp(merged.shortBreakMinutes, 1, 60, DEFAULTS.shortBreakMinutes);
+  merged.longBreakMinutes = clamp(merged.longBreakMinutes, 5, 120, DEFAULTS.longBreakMinutes);
+  merged.completedFocusCount = clamp(merged.completedFocusCount, 0, 1000, 0);
+  merged.timeLeftMs = Math.max(0, Number(merged.timeLeftMs || 0));
+
+  return merged;
 }
 
-async function setState(next) {
-  await chrome.storage.local.set({ [STATE_KEY]: next });
+async function saveState(state) {
+  await chrome.storage.local.set({ [STATE_KEY]: state });
 }
 
-function materialiseState(state) {
-  if (!state.isRunning || !state.endTs) {
-    return state;
+function materialiseState(state, now = Date.now()) {
+  const next = { ...state };
+
+  if (next.isRunning && next.endTs) {
+    next.timeLeftMs = Math.max(0, next.endTs - now);
+    if (next.timeLeftMs <= 0) {
+      next.isRunning = false;
+      next.timeLeftMs = 0;
+    }
   }
-  const now = Date.now();
-  const remaining = Math.max(0, Math.ceil((state.endTs - now) / 1000));
-  if (remaining <= 0) {
-    return {
-      ...state,
-      isRunning: false,
-      timeLeft: 0,
-      endTs: null
-    };
+
+  return next;
+}
+
+function modeBadgePrefix(mode) {
+  if (mode === 'focus') return 'F';
+  if (mode === 'shortBreak') return 'B';
+  return 'L';
+}
+
+function getBadgePresentation(state, now = Date.now()) {
+  const mode = state.mode;
+  const focusColor = '#343a40';
+  const breakColor = '#2E8B57';
+  const color = mode === 'focus' ? focusColor : breakColor;
+
+  if (state.showDoneUntil && now < state.showDoneUntil) {
+    return { text: 'DONE', color: '#1f6feb' };
   }
-  return { ...state, timeLeft: remaining };
+
+  if (!state.isRunning) {
+    return { text: '||', color };
+  }
+
+  const mins = Math.max(0, Math.ceil(state.timeLeftMs / 60000));
+  const compact = `${modeBadgePrefix(mode)}${Math.min(99, mins)}`;
+  return { text: compact.slice(0, 4), color };
 }
 
 async function setBadge(state) {
-  const text = formatBadge(state.timeLeft);
-  await chrome.action.setBadgeText({ text });
-  const color = state.mode === 'break' ? '#2E8B57' : '#343a40';
-  await chrome.action.setBadgeBackgroundColor({ color });
+  const badge = getBadgePresentation(state);
+  await chrome.action.setBadgeBackgroundColor({ color: badge.color });
+  await chrome.action.setBadgeText({ text: badge.text });
+}
+
+async function clearTimerAlarm() {
+  await chrome.alarms.clear(ALARM_NAME);
+}
+
+function computeNextMode(state) {
+  if (state.mode === 'focus') {
+    const nextCount = state.completedFocusCount + 1;
+    return nextCount % 4 === 0 ? 'longBreak' : 'shortBreak';
+  }
+  return 'focus';
+}
+
+async function ensureAlarmForRunningTimer() {
+  const state = materialiseState(await loadState());
+  const alarm = await chrome.alarms.get(ALARM_NAME);
+
+  if (state.isRunning) {
+    if (!alarm) {
+      await chrome.alarms.create(ALARM_NAME, { periodInMinutes: 0.5 });
+    }
+  } else if (alarm) {
+    await clearTimerAlarm();
+  }
+
+  await saveState(state);
+  await setBadge(state);
+}
+
+async function notifyCompletion(state) {
+  const label = state.lastCompletedMode === 'focus' ? 'Focus' : (state.lastCompletedMode === 'longBreak' ? 'Long break' : 'Break');
+  await chrome.notifications.create({
+    type: 'basic',
+    iconUrl: 'icon.png',
+    title: 'Pomodoro Timer',
+    message: `${label} session complete`
+  });
+}
+
+async function completeAndAdvance(state, now = Date.now()) {
+  const completedMode = state.mode;
+
+  if (completedMode === 'focus') {
+    state.completedFocusCount += 1;
+  } else if (completedMode === 'longBreak') {
+    state.completedFocusCount = 0;
+  }
+
+  const nextMode = computeNextMode(state);
+
+  state.lastCompletedMode = completedMode;
+  state.mode = nextMode;
+  state.isRunning = false;
+  state.startedAt = null;
+  state.endTs = null;
+  state.timeLeftMs = durationMsForMode(state, nextMode);
+  state.completionEventId = (state.completionEventId || 0) + 1;
+  state.showDoneUntil = now + 5000;
+
+  await clearTimerAlarm();
+  await notifyCompletion(state);
+  await saveState(state);
+  await setBadge(state);
+
+  return state;
 }
 
 async function tick() {
-  let state = await getState();
-  state = materialiseState(state);
+  let state = materialiseState(await loadState());
+  const now = Date.now();
 
-  // Completion event
-  if (!state.isRunning && state.timeLeft === 0) {
-    try {
-      await chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icon.png',
-        title: 'Pomodoro Timer',
-        message: `${state.mode === 'focus' ? 'Focus' : 'Break'} session complete.`
-      });
-    } catch (_) {
-      // ignore
-    }
-
-    // Auto-reset to mode default after completion.
-    state.timeLeft = modeSeconds(state);
+  if (state.isRunning && state.timeLeftMs <= 0) {
+    state = await completeAndAdvance(state, now);
+  } else {
+    await saveState(state);
+    await setBadge(state);
   }
 
-  await setState(state);
-  await setBadge(state);
+  return state;
 }
 
 async function startTimer() {
-  let state = await getState();
-  state = materialiseState(state);
+  let state = materialiseState(await loadState());
   if (state.isRunning) return state;
 
-  state.isRunning = true;
-  state.endTs = Date.now() + (Math.max(1, state.timeLeft) * 1000);
-  await setState(state);
-  await setBadge(state);
+  if (state.timeLeftMs <= 0) {
+    state.timeLeftMs = durationMsForMode(state);
+  }
 
-  await chrome.alarms.create(ALARM_TICK, { periodInMinutes: 0.1 });
+  const now = Date.now();
+  state.isRunning = true;
+  state.startedAt = now;
+  state.endTs = now + state.timeLeftMs;
+
+  await saveState(state);
+  await chrome.alarms.create(ALARM_NAME, { periodInMinutes: 0.5 });
+  await setBadge(state);
   return state;
 }
 
 async function pauseTimer() {
-  let state = await getState();
-  state = materialiseState(state);
+  let state = materialiseState(await loadState());
   state.isRunning = false;
+  state.startedAt = null;
   state.endTs = null;
-  await setState(state);
+
+  await saveState(state);
+  await clearTimerAlarm();
   await setBadge(state);
-  await chrome.alarms.clear(ALARM_TICK);
   return state;
 }
 
 async function resetTimer() {
-  let state = await getState();
+  let state = await loadState();
   state.isRunning = false;
+  state.startedAt = null;
   state.endTs = null;
-  state.timeLeft = modeSeconds(state);
-  await setState(state);
+  state.timeLeftMs = durationMsForMode(state);
+
+  await saveState(state);
+  await clearTimerAlarm();
   await setBadge(state);
-  await chrome.alarms.clear(ALARM_TICK);
   return state;
 }
 
 async function setMode(mode) {
-  let state = await getState();
-  state.mode = mode === 'break' ? 'break' : 'focus';
+  let state = await loadState();
+  const nextMode = ['focus', 'shortBreak', 'longBreak'].includes(mode) ? mode : 'focus';
+
+  state.mode = nextMode;
   state.isRunning = false;
+  state.startedAt = null;
   state.endTs = null;
-  state.timeLeft = modeSeconds(state);
-  await setState(state);
+  state.timeLeftMs = durationMsForMode(state, nextMode);
+
+  await saveState(state);
+  await clearTimerAlarm();
   await setBadge(state);
-  await chrome.alarms.clear(ALARM_TICK);
   return state;
 }
 
-async function setFocusMinutes(minutes) {
-  let state = await getState();
-  const m = Math.min(120, Math.max(1, Number(minutes) || 20));
-  state.focusMinutes = m;
-  if (state.mode === 'focus' && !state.isRunning) {
-    state.timeLeft = m * 60;
+async function setDurations(payload) {
+  const state = await loadState();
+  state.focusMinutes = clamp(payload.focusMinutes, 1, 120, state.focusMinutes);
+  state.shortBreakMinutes = clamp(payload.shortBreakMinutes, 1, 60, state.shortBreakMinutes);
+  state.longBreakMinutes = clamp(payload.longBreakMinutes, 5, 120, state.longBreakMinutes);
+
+  if (!state.isRunning) {
+    state.timeLeftMs = durationMsForMode(state);
   }
-  await setState(state);
+
+  await saveState(state);
   await setBadge(materialiseState(state));
   return state;
 }
 
-chrome.runtime.onInstalled.addListener(async () => {
-  const state = await getState();
-  await setState(state);
-  await setBadge(state);
-});
-
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== ALARM_TICK) return;
+  if (alarm.name !== ALARM_NAME) return;
   await tick();
 });
+
+chrome.runtime.onStartup.addListener(async () => {
+  await ensureAlarmForRunningTimer();
+});
+
+chrome.runtime.onInstalled.addListener(async () => {
+  await ensureAlarmForRunningTimer();
+});
+
+(async () => {
+  await ensureAlarmForRunningTimer();
+})();
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     switch (msg?.type) {
-      case 'getStatus': {
-        const state = materialiseState(await getState());
-        await setState(state);
+      case 'getState': {
+        const state = materialiseState(await loadState());
+        await saveState(state);
         await setBadge(state);
         sendResponse({ ok: true, state });
-        return;
+        break;
       }
       case 'start':
         sendResponse({ ok: true, state: await startTimer() });
-        return;
+        break;
       case 'pause':
         sendResponse({ ok: true, state: await pauseTimer() });
-        return;
+        break;
       case 'reset':
         sendResponse({ ok: true, state: await resetTimer() });
-        return;
+        break;
       case 'setMode':
         sendResponse({ ok: true, state: await setMode(msg.mode) });
-        return;
-      case 'setFocusMinutes':
-        sendResponse({ ok: true, state: await setFocusMinutes(msg.minutes) });
-        return;
+        break;
+      case 'setDurations':
+        sendResponse({ ok: true, state: await setDurations(msg) });
+        break;
       default:
         sendResponse({ ok: false, error: 'unknown_message' });
     }

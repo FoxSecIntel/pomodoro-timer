@@ -1,23 +1,23 @@
-function pick(...ids) {
-  for (const id of ids) {
-    const el = document.getElementById(id);
-    if (el) return el;
-  }
-  return null;
-}
+const els = {
+  focusBtn: document.getElementById('focusBtn'),
+  shortBreakBtn: document.getElementById('shortBreakBtn'),
+  longBreakBtn: document.getElementById('longBreakBtn'),
+  time: document.getElementById('time'),
+  startBtn: document.getElementById('startBtn'),
+  pauseBtn: document.getElementById('pauseBtn'),
+  resetBtn: document.getElementById('resetBtn'),
+  focusMinutes: document.getElementById('focusMinutes'),
+  shortBreakMinutes: document.getElementById('shortBreakMinutes'),
+  longBreakMinutes: document.getElementById('longBreakMinutes'),
+  applyBtn: document.getElementById('applyBtn'),
+  status: document.getElementById('status'),
+  cycleCount: document.getElementById('cycleCount'),
+  nextPhase: document.getElementById('nextPhase')
+};
 
-const focusBtn = pick('focusBtn', 'focus');
-const breakBtn = pick('breakBtn', 'break');
-const timeDisplay = pick('time', 'timer', 'countdown');
-const startButton = pick('startBtn', 'start');
-const pauseButton = pick('pauseBtn', 'pause');
-const resetButton = pick('resetBtn', 'reset');
-const focusMinutesInput = pick('focusMinutes', 'focusMin', 'focus');
-const applyButton = pick('applyBtn', 'apply');
-const statusDisplay = pick('status', 'modeStatus');
-
+let pollTimer = null;
+let lastCompletionEventId = null;
 let uiState = null;
-let uiTicker = null;
 
 function send(type, payload = {}) {
   return new Promise((resolve) => {
@@ -25,8 +25,8 @@ function send(type, payload = {}) {
   });
 }
 
-function formatTime(seconds) {
-  const s = Math.max(0, Number(seconds || 0));
+function formatMs(ms) {
+  const s = Math.max(0, Math.ceil(Number(ms || 0) / 1000));
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${String(r).padStart(2, '0')}`;
@@ -34,116 +34,152 @@ function formatTime(seconds) {
 
 function materialise(state) {
   if (!state || !state.isRunning || !state.endTs) return state;
-  const rem = Math.max(0, Math.ceil((state.endTs - Date.now()) / 1000));
-  if (rem <= 0) return { ...state, isRunning: false, endTs: null, timeLeft: 0 };
-  return { ...state, timeLeft: rem };
+  const rem = Math.max(0, state.endTs - Date.now());
+  if (rem <= 0) return { ...state, isRunning: false, endTs: null, timeLeftMs: 0 };
+  return { ...state, timeLeftMs: rem };
 }
 
-function updateDisplay(state) {
+function nextPhaseLabel(state) {
+  if (state.mode === 'focus') {
+    const next = (state.completedFocusCount + 1) % 4 === 0 ? 'long break' : 'short break';
+    return `Next: ${next}`;
+  }
+  return 'Next: focus';
+}
+
+function updateModeButtons(mode) {
+  els.focusBtn.classList.toggle('active', mode === 'focus');
+  els.shortBreakBtn.classList.toggle('active', mode === 'shortBreak');
+  els.longBreakBtn.classList.toggle('active', mode === 'longBreak');
+}
+
+function render(state) {
   const s = materialise(state);
   if (!s) return;
 
-  if (timeDisplay) {
-    timeDisplay.textContent = formatTime(s.timeLeft);
-    timeDisplay.style.color = s.mode === 'break' ? '#2E8B57' : '#343a40';
-  }
+  uiState = s;
+  els.time.textContent = formatMs(s.timeLeftMs);
+  els.time.style.color = s.mode === 'focus' ? '#343a40' : '#2E8B57';
 
-  if (startButton) startButton.disabled = !!s.isRunning;
-  if (pauseButton) pauseButton.disabled = !s.isRunning;
+  updateModeButtons(s.mode);
 
-  if (focusBtn) focusBtn.classList.toggle('active', s.mode === 'focus');
-  if (breakBtn) breakBtn.classList.toggle('active', s.mode === 'break');
+  els.startBtn.disabled = !!s.isRunning;
+  els.pauseBtn.disabled = !s.isRunning;
 
-  if (statusDisplay) {
-    statusDisplay.textContent = `Mode: ${s.mode} | ${s.isRunning ? 'Running' : 'Paused'}`;
+  const label = s.mode === 'focus' ? 'focus' : (s.mode === 'shortBreak' ? 'short break' : 'long break');
+  els.status.textContent = `Mode: ${label} | ${s.isRunning ? 'Running' : 'Paused'}`;
+  els.cycleCount.textContent = `Completed focus sessions: ${s.completedFocusCount}`;
+  els.nextPhase.textContent = nextPhaseLabel(s);
+
+  els.focusMinutes.value = String(s.focusMinutes);
+  els.shortBreakMinutes.value = String(s.shortBreakMinutes);
+  els.longBreakMinutes.value = String(s.longBreakMinutes);
+}
+
+function playCompletionBleep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.value = 0.04;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    setTimeout(() => {
+      osc.stop();
+      ctx.close();
+    }, 180);
+  } catch (_) {
+    // ignore audio failures
   }
 }
 
-function startUiTicker() {
-  if (uiTicker) clearInterval(uiTicker);
-  uiTicker = setInterval(() => {
-    if (!uiState) return;
-    uiState = materialise(uiState);
-    updateDisplay(uiState);
-  }, 1000);
+async function refresh() {
+  const res = await send('getState');
+  if (!res?.ok || !res.state) return;
+
+  const state = res.state;
+  if (lastCompletionEventId === null) {
+    lastCompletionEventId = state.completionEventId;
+  } else if (state.completionEventId !== lastCompletionEventId) {
+    lastCompletionEventId = state.completionEventId;
+    playCompletionBleep();
+  }
+
+  render(state);
 }
 
-async function refreshStatus() {
-  const res = await send('getStatus');
-  if (!res?.ok) return;
-  uiState = res.state;
-  if (focusMinutesInput) focusMinutesInput.value = String(uiState.focusMinutes || 20);
-  updateDisplay(uiState);
+function clampInput(id, min, max, fallback) {
+  const raw = Number(els[id].value);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.min(max, Math.max(min, raw));
 }
 
-async function init() {
-  if (focusBtn) {
-    focusBtn.addEventListener('click', async () => {
-      const res = await send('setMode', { mode: 'focus' });
-      if (res?.ok) {
-        uiState = res.state;
-        updateDisplay(uiState);
-      }
-    });
-  }
+async function applyDurations() {
+  const focusMinutes = clampInput('focusMinutes', 1, 120, 25);
+  const shortBreakMinutes = clampInput('shortBreakMinutes', 1, 60, 5);
+  const longBreakMinutes = clampInput('longBreakMinutes', 5, 120, 15);
 
-  if (breakBtn) {
-    breakBtn.addEventListener('click', async () => {
-      const res = await send('setMode', { mode: 'break' });
-      if (res?.ok) {
-        uiState = res.state;
-        updateDisplay(uiState);
-      }
-    });
-  }
-
-  if (startButton) {
-    startButton.addEventListener('click', async () => {
-      const res = await send('start');
-      if (res?.ok) {
-        uiState = res.state;
-        updateDisplay(uiState);
-      }
-    });
-  }
-
-  if (pauseButton) {
-    pauseButton.addEventListener('click', async () => {
-      const res = await send('pause');
-      if (res?.ok) {
-        uiState = res.state;
-        updateDisplay(uiState);
-      }
-    });
-  }
-
-  if (resetButton) {
-    resetButton.addEventListener('click', async () => {
-      const res = await send('reset');
-      if (res?.ok) {
-        uiState = res.state;
-        updateDisplay(uiState);
-      }
-    });
-  }
-
-  if (applyButton) {
-    applyButton.addEventListener('click', async () => {
-      const mins = Number(focusMinutesInput?.value || 20);
-      const res = await send('setFocusMinutes', { minutes: mins });
-      if (res?.ok) {
-        uiState = res.state;
-        updateDisplay(uiState);
-      }
-    });
-  }
-
-  await refreshStatus();
-  startUiTicker();
+  const res = await send('setDurations', {
+    focusMinutes,
+    shortBreakMinutes,
+    longBreakMinutes
+  });
+  if (res?.ok) render(res.state);
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
+function bind() {
+  els.focusBtn.addEventListener('click', async () => {
+    const res = await send('setMode', { mode: 'focus' });
+    if (res?.ok) render(res.state);
+  });
+
+  els.shortBreakBtn.addEventListener('click', async () => {
+    const res = await send('setMode', { mode: 'shortBreak' });
+    if (res?.ok) render(res.state);
+  });
+
+  els.longBreakBtn.addEventListener('click', async () => {
+    const res = await send('setMode', { mode: 'longBreak' });
+    if (res?.ok) render(res.state);
+  });
+
+  els.startBtn.addEventListener('click', async () => {
+    const res = await send('start');
+    if (res?.ok) render(res.state);
+  });
+
+  els.pauseBtn.addEventListener('click', async () => {
+    const res = await send('pause');
+    if (res?.ok) render(res.state);
+  });
+
+  els.resetBtn.addEventListener('click', async () => {
+    const res = await send('reset');
+    if (res?.ok) render(res.state);
+  });
+
+  els.applyBtn.addEventListener('click', applyDurations);
 }
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(refresh, 1000);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+window.addEventListener('unload', stopPolling);
+
+(async function init() {
+  bind();
+  await refresh();
+  startPolling();
+})();

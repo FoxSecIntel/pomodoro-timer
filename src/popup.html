@@ -1,12 +1,13 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pomodoro Timer</title>
   <style>
     body {
       font-family: Arial, sans-serif;
-      width: 260px;
+      width: 280px;
       text-align: center;
       margin: 0;
       padding: 10px;
@@ -23,7 +24,7 @@
     #time {
       font-size: 44px;
       margin: 6px 0 8px;
-      color: #343a40; /* Focus default: deep grey */
+      color: #343a40;
       font-weight: 700;
     }
     .controls, .modes {
@@ -44,8 +45,8 @@
       color: #fff;
       white-space: nowrap;
     }
-    button.secondary { background: #555; }
-    button.success { background: #2E8B57; }
+    button.secondary { background: #6c757d; }
+    button.active { outline: 2px solid #00000022; }
     .row {
       display: flex;
       align-items: center;
@@ -57,7 +58,7 @@
     .row label {
       font-size: 13px;
       color: #444;
-      min-width: 58px;
+      min-width: 90px;
       text-align: right;
     }
     input[type='number'] {
@@ -66,35 +67,57 @@
       font-size: 14px;
     }
     #status {
-      font-size: 12px;
-      color: #555;
       margin-top: 8px;
+      font-size: 12px;
+      color: #444;
+    }
+    #meta {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #333;
+      text-align: left;
+      border-top: 1px solid #ddd;
+      padding-top: 6px;
     }
   </style>
 </head>
 <body>
   <div class="timer">
     <div class="modes">
-      <button id="focusMode" class="secondary">Focus</button>
-      <button id="breakMode" class="success">Break</button>
+      <button id="focusBtn" class="secondary active">Focus</button>
+      <button id="shortBreakBtn" class="secondary">Short break</button>
+      <button id="longBreakBtn" class="secondary">Long break</button>
     </div>
 
-    <h1 id="time">20:00</h1>
+    <div id="time">25:00</div>
 
     <div class="controls">
-      <button id="start">Start</button>
-      <button id="pause" class="secondary">Pause</button>
-      <button id="reset" class="secondary">Reset</button>
+      <button id="startBtn">Start</button>
+      <button id="pauseBtn" class="secondary">Pause</button>
+      <button id="resetBtn" class="secondary">Reset</button>
     </div>
 
     <div class="row">
       <label for="focusMinutes">Focus min</label>
-      <input id="focusMinutes" type="number" min="1" max="120" value="20" />
-      <button id="applyFocus" class="secondary">Apply</button>
+      <input id="focusMinutes" type="number" min="1" max="120" value="25" />
+    </div>
+    <div class="row">
+      <label for="shortBreakMinutes">Short break</label>
+      <input id="shortBreakMinutes" type="number" min="1" max="60" value="5" />
+    </div>
+    <div class="row">
+      <label for="longBreakMinutes">Long break</label>
+      <input id="longBreakMinutes" type="number" min="5" max="120" value="15" />
+      <button id="applyBtn" class="secondary">Apply</button>
     </div>
 
-    <div id="status">Loading...</div>
+    <div id="status">Mode: focus | Paused</div>
+    <div id="meta">
+      <div id="cycleCount">Completed focus sessions: 0</div>
+      <div id="nextPhase">Next: short break</div>
+    </div>
   </div>
+
   <script src="popup.js"></script>
 </body>
 </html>
