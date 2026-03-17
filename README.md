@@ -27,6 +27,10 @@ https://chromewebstore.google.com/detail/pomodoro-timer/geibgkighpdnoioegfhmkffo
 - Completion notification when time is up
 - State persistence when popup is closed and reopened
 
+## Screenshot
+
+![Pomodoro Timer popup UI](docs/media/pomodoro-ui.jpg)
+
 ## Why this implementation is reliable (MV3-safe)
 
 Manifest V3 service workers can suspend, so naïve `setInterval` timers drift or stop.
