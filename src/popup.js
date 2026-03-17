@@ -1,90 +1,125 @@
+const focusBtn = document.getElementById('focusBtn');
+const breakBtn = document.getElementById('breakBtn');
 const timeDisplay = document.getElementById('time');
+const startButton = document.getElementById('startBtn');
+const pauseButton = document.getElementById('pauseBtn');
+const resetButton = document.getElementById('resetBtn');
+const focusMinutesInput = document.getElementById('focusMinutes');
+const applyButton = document.getElementById('applyBtn');
 const statusDisplay = document.getElementById('status');
-const startButton = document.getElementById('start');
-const pauseButton = document.getElementById('pause');
-const resetButton = document.getElementById('reset');
-const focusModeButton = document.getElementById('focusMode');
-const breakModeButton = document.getElementById('breakMode');
-const applyFocusButton = document.getElementById('applyFocus');
-const focusInput = document.getElementById('focusMinutes');
 
-let pollHandle = null;
+let uiState = null;
+let uiTicker = null;
 
-function formatTime(sec) {
-  const minutes = Math.floor(sec / 60);
-  const seconds = sec % 60;
-  return `${minutes < 10 ? '0' : ''}${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+function send(type, payload = {}) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type, ...payload }, (res) => resolve(res || { ok: false }));
+  });
+}
+
+function formatTime(seconds) {
+  const s = Math.max(0, Number(seconds || 0));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+function materialise(state) {
+  if (!state || !state.isRunning || !state.endTs) return state;
+  const rem = Math.max(0, Math.ceil((state.endTs - Date.now()) / 1000));
+  if (rem <= 0) {
+    return { ...state, isRunning: false, endTs: null, timeLeft: 0 };
+  }
+  return { ...state, timeLeft: rem };
 }
 
 function updateDisplay(state) {
-  const timeLeft = Number(state.timeLeft || 0);
-  timeDisplay.textContent = formatTime(timeLeft);
+  const s = materialise(state);
+  if (!s) return;
 
-  const isRunning = Boolean(state.isRunning);
-  const mode = state.mode || 'focus';
+  timeDisplay.textContent = formatTime(s.timeLeft);
+  timeDisplay.style.color = s.mode === 'break' ? '#2E8B57' : '#343a40';
 
-  // Visual feedback by mode: deep grey for focus, forest green for break.
-  timeDisplay.style.color = mode === 'break' ? '#2E8B57' : '#343a40';
+  startButton.disabled = !!s.isRunning;
+  pauseButton.disabled = !s.isRunning;
 
-  startButton.disabled = isRunning;
-  pauseButton.disabled = !isRunning;
+  focusBtn.classList.toggle('active', s.mode === 'focus');
+  breakBtn.classList.toggle('active', s.mode === 'break');
 
-  statusDisplay.textContent = `Mode: ${mode} | ${isRunning ? 'Running' : 'Paused'}`;
+  statusDisplay.textContent = `Mode: ${s.mode} | ${s.isRunning ? 'Running' : 'Paused'}`;
 }
 
-function safeSend(message, callback) {
-  chrome.runtime.sendMessage(message, (response) => {
-    if (chrome.runtime.lastError) {
-      statusDisplay.textContent = `Error: ${chrome.runtime.lastError.message}`;
-      return;
-    }
-    if (typeof callback === 'function') callback(response);
-  });
+function startUiTicker() {
+  if (uiTicker) clearInterval(uiTicker);
+  uiTicker = setInterval(() => {
+    if (!uiState) return;
+    uiState = materialise(uiState);
+    updateDisplay(uiState);
+  }, 1000);
 }
 
-function getState() {
-  safeSend({ action: 'getStatus' }, (response) => {
-    if (!response) {
-      statusDisplay.textContent = 'No response from timer service';
-      return;
-    }
-    updateDisplay(response);
-  });
-}
-
-startButton.addEventListener('click', () => {
-  safeSend({ action: 'start' }, getState);
-});
-
-pauseButton.addEventListener('click', () => {
-  safeSend({ action: 'pause' }, getState);
-});
-
-resetButton.addEventListener('click', () => {
-  safeSend({ action: 'reset' }, getState);
-});
-
-focusModeButton.addEventListener('click', () => {
-  safeSend({ action: 'setMode', mode: 'focus' }, getState);
-});
-
-breakModeButton.addEventListener('click', () => {
-  safeSend({ action: 'setMode', mode: 'break' }, getState);
-});
-
-applyFocusButton.addEventListener('click', () => {
-  const minutes = Number(focusInput.value || 20);
-  safeSend({ action: 'setFocusMinutes', minutes }, getState);
-});
-
-document.addEventListener('DOMContentLoaded', () => {
-  getState();
-  pollHandle = setInterval(getState, 1000);
-});
-
-window.addEventListener('unload', () => {
-  if (pollHandle) {
-    clearInterval(pollHandle);
-    pollHandle = null;
+async function refreshStatus() {
+  const res = await send('getStatus');
+  if (!res?.ok) return;
+  uiState = res.state;
+  if (focusMinutesInput) {
+    focusMinutesInput.value = String(uiState.focusMinutes || 20);
   }
-});
+  updateDisplay(uiState);
+}
+
+async function init() {
+  focusBtn?.addEventListener('click', async () => {
+    const res = await send('setMode', { mode: 'focus' });
+    if (res?.ok) {
+      uiState = res.state;
+      updateDisplay(uiState);
+    }
+  });
+
+  breakBtn?.addEventListener('click', async () => {
+    const res = await send('setMode', { mode: 'break' });
+    if (res?.ok) {
+      uiState = res.state;
+      updateDisplay(uiState);
+    }
+  });
+
+  startButton?.addEventListener('click', async () => {
+    const res = await send('start');
+    if (res?.ok) {
+      uiState = res.state;
+      updateDisplay(uiState);
+    }
+  });
+
+  pauseButton?.addEventListener('click', async () => {
+    const res = await send('pause');
+    if (res?.ok) {
+      uiState = res.state;
+      updateDisplay(uiState);
+    }
+  });
+
+  resetButton?.addEventListener('click', async () => {
+    const res = await send('reset');
+    if (res?.ok) {
+      uiState = res.state;
+      updateDisplay(uiState);
+    }
+  });
+
+  applyButton?.addEventListener('click', async () => {
+    const mins = Number(focusMinutesInput?.value || 20);
+    const res = await send('setFocusMinutes', { minutes: mins });
+    if (res?.ok) {
+      uiState = res.state;
+      updateDisplay(uiState);
+    }
+  });
+
+  await refreshStatus();
+  startUiTicker();
+}
+
+init();
