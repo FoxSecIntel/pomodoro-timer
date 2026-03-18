@@ -71,9 +71,15 @@ function render(state) {
   els.cycleCount.textContent = `Completed focus sessions: ${s.completedFocusCount}`;
   els.nextPhase.textContent = nextPhaseLabel(s);
 
-  els.focusMinutes.value = String(s.focusMinutes);
-  els.shortBreakMinutes.value = String(s.shortBreakMinutes);
-  els.longBreakMinutes.value = String(s.longBreakMinutes);
+  if (document.activeElement !== els.focusMinutes) {
+    els.focusMinutes.value = String(s.focusMinutes);
+  }
+  if (document.activeElement !== els.shortBreakMinutes) {
+    els.shortBreakMinutes.value = String(s.shortBreakMinutes);
+  }
+  if (document.activeElement !== els.longBreakMinutes) {
+    els.longBreakMinutes.value = String(s.longBreakMinutes);
+  }
 }
 
 function playCompletionBleep() {
@@ -118,7 +124,7 @@ function clampInput(id, min, max, fallback) {
 }
 
 async function applyDurations() {
-  const focusMinutes = clampInput('focusMinutes', 1, 120, 25);
+  const focusMinutes = clampInput('focusMinutes', 1, 120, 20);
   const shortBreakMinutes = clampInput('shortBreakMinutes', 1, 60, 5);
   const longBreakMinutes = clampInput('longBreakMinutes', 5, 120, 15);
 
