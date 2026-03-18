@@ -102,4 +102,4 @@ This keeps countdown behaviour stable despite service worker lifecycle events.
 
 ## Licence
 
-MIT
+Apache License 2.0
