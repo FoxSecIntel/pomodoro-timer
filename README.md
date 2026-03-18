@@ -100,6 +100,6 @@ This keeps countdown behaviour stable despite service worker lifecycle events.
 - No telemetry collection
 - All timer state remains local in your browser
 
-## Licence
+## License
 
 Apache License 2.0
