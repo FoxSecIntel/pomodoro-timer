@@ -3,6 +3,8 @@ const els = {
   shortBreakBtn: document.getElementById('shortBreakBtn'),
   longBreakBtn: document.getElementById('longBreakBtn'),
   time: document.getElementById('time'),
+  modeLabel: document.getElementById('modeLabel'),
+  ringFill: document.getElementById('ringFill'),
   startBtn: document.getElementById('startBtn'),
   pauseBtn: document.getElementById('pauseBtn'),
   resetBtn: document.getElementById('resetBtn'),
@@ -14,6 +16,13 @@ const els = {
   cycleCount: document.getElementById('cycleCount'),
   nextPhase: document.getElementById('nextPhase')
 };
+
+const COLOURS = {
+  emerald: '#10B981',
+  coral: '#EF4444'
+};
+
+const RING_CIRC = 2 * Math.PI * 85;
 
 let pollTimer = null;
 let lastCompletionEventId = null;
@@ -39,6 +48,18 @@ function materialise(state) {
   return { ...state, timeLeftMs: rem };
 }
 
+function modeLabel(mode) {
+  if (mode === 'shortBreak') return 'Short break';
+  if (mode === 'longBreak') return 'Long break';
+  return 'Focus';
+}
+
+function totalModeMs(state) {
+  if (state.mode === 'focus') return state.focusMinutes * 60 * 1000;
+  if (state.mode === 'shortBreak') return state.shortBreakMinutes * 60 * 1000;
+  return state.longBreakMinutes * 60 * 1000;
+}
+
 function nextPhaseLabel(state) {
   if (state.mode === 'focus') {
     const next = (state.completedFocusCount + 1) % 4 === 0 ? 'long break' : 'short break';
@@ -53,21 +74,50 @@ function updateModeButtons(mode) {
   els.longBreakBtn.classList.toggle('active', mode === 'longBreak');
 }
 
+function setVisualState(s) {
+  const secsLeft = Math.ceil(Number(s.timeLeftMs || 0) / 1000);
+  const isUrgent = s.isRunning && secsLeft <= 60;
+  const isPaused = !s.isRunning;
+  const colour = (isUrgent || isPaused) ? COLOURS.coral : COLOURS.emerald;
+
+  els.time.style.color = colour;
+  els.ringFill.style.stroke = colour;
+  els.time.classList.toggle('running', !!s.isRunning);
+}
+
+function setRingProgress(s) {
+  const total = Math.max(1, totalModeMs(s));
+  const remain = Math.max(0, Math.min(total, Number(s.timeLeftMs || 0)));
+  const progress = 1 - (remain / total);
+  const offset = RING_CIRC * (1 - progress);
+  els.ringFill.style.strokeDasharray = `${RING_CIRC}`;
+  els.ringFill.style.strokeDashoffset = `${offset}`;
+}
+
+function pulseSessionCounter() {
+  els.cycleCount.classList.remove('pulse');
+  // force reflow so repeated completion can animate
+  // eslint-disable-next-line no-unused-expressions
+  els.cycleCount.offsetWidth;
+  els.cycleCount.classList.add('pulse');
+}
+
 function render(state) {
   const s = materialise(state);
   if (!s) return;
 
   uiState = s;
   els.time.textContent = formatMs(s.timeLeftMs);
-  els.time.style.color = s.mode === 'focus' ? '#343a40' : '#2E8B57';
+  els.modeLabel.textContent = modeLabel(s.mode);
 
   updateModeButtons(s.mode);
+  setVisualState(s);
+  setRingProgress(s);
 
   els.startBtn.disabled = !!s.isRunning;
   els.pauseBtn.disabled = !s.isRunning;
 
-  const label = s.mode === 'focus' ? 'focus' : (s.mode === 'shortBreak' ? 'short break' : 'long break');
-  els.status.textContent = `Mode: ${label} | ${s.isRunning ? 'Running' : 'Paused'}`;
+  els.status.textContent = `Mode: ${s.mode === 'focus' ? 'focus' : (s.mode === 'shortBreak' ? 'short break' : 'long break')} | ${s.isRunning ? 'Running' : 'Paused'}`;
   els.cycleCount.textContent = `Completed focus sessions: ${s.completedFocusCount}`;
   els.nextPhase.textContent = nextPhaseLabel(s);
 
@@ -110,8 +160,12 @@ async function refresh() {
   if (lastCompletionEventId === null) {
     lastCompletionEventId = state.completionEventId;
   } else if (state.completionEventId !== lastCompletionEventId) {
+    const lastMode = state.lastCompletedMode;
     lastCompletionEventId = state.completionEventId;
     playCompletionBleep();
+    if (lastMode === 'focus') {
+      pulseSessionCounter();
+    }
   }
 
   render(state);
