@@ -1,7 +1,9 @@
 const STATE_KEY = 'pomodoroState';
 const ALARM_NAME = 'pomodoro_tick';
+const STATE_VERSION = 2;
 
 const DEFAULTS = {
+  stateVersion: STATE_VERSION,
   mode: 'focus', // focus | shortBreak | longBreak
   isRunning: false,
   startedAt: null,
@@ -22,6 +24,23 @@ function clamp(v, min, max, fallback) {
   return Math.min(max, Math.max(min, n));
 }
 
+function isObject(v) {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function migrateState(raw) {
+  const input = isObject(raw) ? { ...raw } : {};
+  const version = Number(input.stateVersion || 1);
+
+  // v1 -> v2 migrations can be added here.
+  if (version < 2) {
+    input.stateVersion = 2;
+    if (!Number.isFinite(Number(input.showDoneUntil))) input.showDoneUntil = 0;
+  }
+
+  return input;
+}
+
 function durationMsForMode(state, mode = state.mode) {
   if (mode === 'focus') return state.focusMinutes * 60 * 1000;
   if (mode === 'shortBreak') return state.shortBreakMinutes * 60 * 1000;
@@ -30,13 +49,24 @@ function durationMsForMode(state, mode = state.mode) {
 
 async function loadState() {
   const data = await chrome.storage.local.get(STATE_KEY);
-  const merged = { ...DEFAULTS, ...(data[STATE_KEY] || {}) };
+  const migrated = migrateState(data[STATE_KEY] || {});
+  const merged = { ...DEFAULTS, ...migrated };
 
+  merged.stateVersion = STATE_VERSION;
   merged.focusMinutes = clamp(merged.focusMinutes, 1, 120, DEFAULTS.focusMinutes);
   merged.shortBreakMinutes = clamp(merged.shortBreakMinutes, 1, 60, DEFAULTS.shortBreakMinutes);
   merged.longBreakMinutes = clamp(merged.longBreakMinutes, 5, 120, DEFAULTS.longBreakMinutes);
   merged.completedFocusCount = clamp(merged.completedFocusCount, 0, 1000, 0);
   merged.timeLeftMs = Math.max(0, Number(merged.timeLeftMs || 0));
+  merged.mode = ['focus', 'shortBreak', 'longBreak'].includes(merged.mode) ? merged.mode : 'focus';
+  merged.isRunning = !!merged.isRunning;
+  merged.startedAt = Number.isFinite(Number(merged.startedAt)) ? Number(merged.startedAt) : null;
+  merged.endTs = Number.isFinite(Number(merged.endTs)) ? Number(merged.endTs) : null;
+  merged.lastCompletedMode = ['focus', 'shortBreak', 'longBreak', null].includes(merged.lastCompletedMode)
+    ? merged.lastCompletedMode
+    : null;
+  merged.completionEventId = clamp(merged.completionEventId, 0, 1_000_000, 0);
+  merged.showDoneUntil = Number.isFinite(Number(merged.showDoneUntil)) ? Number(merged.showDoneUntil) : 0;
 
   return merged;
 }
@@ -275,9 +305,52 @@ chrome.runtime.onInstalled.addListener(async () => {
   await ensureAlarmForRunningTimer();
 })();
 
+function validateMessage(msg) {
+  if (!isObject(msg)) return { ok: false, error: 'invalid_message' };
+  const type = typeof msg.type === 'string' ? msg.type : '';
+
+  if (type === 'getState' || type === 'start' || type === 'pause' || type === 'reset') {
+    return { ok: true, type, payload: {} };
+  }
+
+  if (type === 'setMode') {
+    const mode = typeof msg.mode === 'string' ? msg.mode : '';
+    if (!['focus', 'shortBreak', 'longBreak'].includes(mode)) {
+      return { ok: false, error: 'invalid_mode' };
+    }
+    return { ok: true, type, payload: { mode } };
+  }
+
+  if (type === 'setDurations') {
+    const focusMinutes = clamp(msg.focusMinutes, 1, 120, NaN);
+    const shortBreakMinutes = clamp(msg.shortBreakMinutes, 1, 60, NaN);
+    const longBreakMinutes = clamp(msg.longBreakMinutes, 5, 120, NaN);
+
+    if (![focusMinutes, shortBreakMinutes, longBreakMinutes].every((v) => Number.isFinite(v))) {
+      return { ok: false, error: 'invalid_durations' };
+    }
+
+    return {
+      ok: true,
+      type,
+      payload: { focusMinutes, shortBreakMinutes, longBreakMinutes }
+    };
+  }
+
+  return { ok: false, error: 'unknown_message' };
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
-    switch (msg?.type) {
+    const validated = validateMessage(msg);
+    if (!validated.ok) {
+      sendResponse({ ok: false, error: validated.error });
+      return;
+    }
+
+    const { type, payload } = validated;
+
+    switch (type) {
       case 'getState': {
         const state = materialiseState(await loadState());
         await saveState(state);
@@ -295,10 +368,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ ok: true, state: await resetTimer() });
         break;
       case 'setMode':
-        sendResponse({ ok: true, state: await setMode(msg.mode) });
+        sendResponse({ ok: true, state: await setMode(payload.mode) });
         break;
       case 'setDurations':
-        sendResponse({ ok: true, state: await setDurations(msg) });
+        sendResponse({ ok: true, state: await setDurations(payload) });
         break;
       default:
         sendResponse({ ok: false, error: 'unknown_message' });

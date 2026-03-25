@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Pomodoro Timer",
-  "version": "1.2.2",
-  "description": "A lightweight Pomodoro timer with badge status, persistence, and completion notifications.",
+  "name": "Pomodoro Timer: The Focus Lens",
+  "short_name": "Focus Lens",
+  "version": "1.2.3",
+  "description": "Stop procrastinating. A precision Pomodoro Timer with high-contrast visual feedback and a live countdown on your Chrome toolbar.",
   "permissions": [
     "storage",
     "alarms",
